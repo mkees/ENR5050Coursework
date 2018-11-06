@@ -1,0 +1,380 @@
+---
+title: "HW3"
+author: "Maurice"
+output:
+  html_document:
+    df_print: paged
+    toc: no
+    toc_depth: '5'
+  pdf_document:
+    fig_height: 3
+    fig_width: 4
+    toc: no
+    toc_depth: 5
+header-includes: \usepackage{float} \usepackage{amsmath} \usepackage{amssymb}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message=FALSE)
+```
+
+## Comment
+
+Some of these exercises did not make any sense to me, and I have tried to interpret them as well as I could.
+
+## Preamble
+
+```{r}
+# load libraries
+require(odbc)
+require(dbplyr)
+require(tidyverse)
+require(readxl)
+require(knitr)
+require(broom)
+
+# connect to database
+dbConn<- dbConnect(odbc(), 
+                   driver = "SQL Server",
+                   server = "ecoinfo2,6004",
+                   database = "keesDB", uid = "TDM", pwd = "database")
+```
+
+
+
+## Exercise 1
+
+
+*The COUNT of total number of individuals, BY Species and BY Year*
+	
+
+```{r}
+query1 <- "
+  SELECT 
+    s.Species, 
+    YEAR(m.SampDate) AS year, 
+    COUNT(*) AS total
+  FROM 
+    tblFieldDemo AS m
+  INNER JOIN 
+    luSpecies AS s
+  ON
+    m.SpecCode = s.SpecCode
+  GROUP BY 
+    s.Species, 
+    YEAR(m.SampDate);"
+
+# execute query
+rs = dbSendQuery(dbConn, query1)
+
+# retrieve results and put into a variable
+dbRows <- dbFetch(rs)
+
+# Clear the result
+dbClearResult(rs)
+
+# put results in a formatted table
+tbl1 <- spread(dbRows, year, total)
+tbl1 <- kable(tbl1)
+```
+
+
+```{r echo = FALSE}
+tbl1
+```
+
+
+
+\newpage
+## Exercise 2
+
+*The AVERAGE Monthly Temp_H BY Year*
+
+Not sure what was meant, but I assume AVG montly temp, by year *and* month
+	
+```{r}
+query2 <- "
+  SELECT 
+    YEAR(SampDate) AS yr, 
+    MONTH(SampDate) AS mo, 
+    AVG(Temp_H) AS avg_temp
+  FROM 
+    tblWeather
+  GROUP BY 
+    YEAR(SampDate), 
+    MONTH(SampDate)
+  ORDER BY 
+    yr, 
+    mo;"
+
+# execute query
+rs = dbSendQuery(dbConn, query2)
+
+# retrieve results and put into a variable
+dbRows <- dbFetch(rs)
+
+# Clear the result
+dbClearResult(rs)
+
+# replace month names
+dbRows <- dbRows %>%
+  mutate(mo = case_when(mo == 1 ~ "Jan", 
+                        mo == 2 ~ "Feb", 
+                        mo == 5 ~ "May", 
+                        mo == 7 ~ "Jul", 
+                        mo == 8 ~ "Aug", 
+                        mo == 10 ~ "Oct")) %>%
+  rename(year = yr)
+
+# build table
+tbl2 <- spread(dbRows, mo, avg_temp)
+
+# put columns in right order again
+tbl2 <- tbl2 %>%
+  select(year, Jan, Feb, May, Jul, Aug, Oct)
+
+# put results in a formatted table
+tbl2 <- kable(tbl2, digits = 3)
+```
+
+
+```{r echo = FALSE}
+tbl2
+```
+
+
+\newpage
+## Exercise 3
+
+
+The AVERAGE Wt_g By Species and By Sex
+	
+```{r}
+query3 <- "
+  SELECT 
+    Species, Sex, AVG(Wt_g) AS avg_weight
+  FROM 
+    tblFieldDemo AS f
+  INNER JOIN 
+    tblFieldMeas AS m
+  ON 
+    (f.PlotID = m.Plot AND 
+    f.PlotArray = m.PlotArray AND 
+    f.SampDate = m.SampDate AND 
+    f.SpecCode = m.SpecCode AND 
+    f.Rep = m.Rep)
+  INNER JOIN 
+    luSpecies AS s
+  ON 
+    f.SpecCode = s.SpecCode
+  GROUP BY 
+    Species, 
+    Sex
+  ORDER BY 
+    Species, 
+    Sex;"
+
+# execute query
+rs = dbSendQuery(dbConn, query3)
+
+# retrieve results and put into a variable
+dbRows <- dbFetch(rs)
+
+# Clear the result
+dbClearResult(rs)
+
+# put results in a formatted table
+tbl3 <- spread(dbRows, Sex, avg_weight)
+tbl3 <- rename(tbl3, "Null"= `<NA>`)
+tbl3 <- kable(tbl3, digits = 3)
+```
+
+
+```{r echo = FALSE}
+tbl3
+```
+
+
+\newpage
+## Exercise 4
+
+*We are interested in creating a data.framethat can be used to fit an ANOVA (within R) for one particular species (SOLO). We want to know if SOLO abundance (total number of captures) is affected by Sex, Treatment (TRTMT), Block, Year and BasalArea_m2. Thus you will need to use multiple tables (JOINS) to obtain your required dataset. The format of the table should be in the following order (response variable ~ predictor variables):SOLO_Count, Sex, Treatment, Block, Year, BasalArea_m2*sdf
+
+First correct the database, by putting in the right numbers fro BasalArea
+
+
+```{r eval = FALSE}
+# we need to update the basa area for each plot
+
+# step 1 create new column in sql
+  # added through SQL Server
+
+# step 2 read in the spreadsheet since that is where the basal area lives
+dat <- read_excel("SQLExample/SmallMammalData.xlsx", sheet = "FieldData")
+
+# step 3: gget the unique BA values for each plot
+ba <- dat %>%
+  group_by(Plot) %>%
+  summarize(BasalArea = mean(`Basal Area (m^2/ha)`, na.rm = TRUE))
+
+# step 4: loop through the 12 rows of data, 
+# and use an UPDATE query to change the values within the plot table
+for(i in 1:nrow(ba)){
+  dbSendQuery(dbConn, paste("UPDATE fcplots SET BasalArea_m2_ha = ", 
+                            ba$BasalArea[i], 
+                            "WHERE plotid = ", 
+                            ba$Plot[i]))
+}
+```
+
+
+Then start with the exercise
+
+First, retrieve the data from the database
+
+```{r}
+query4 <- "
+  SELECT 
+    CodeDescription AS sex, 
+    block, 
+    trtmt, 
+    YEAR(SampDate) AS yr,
+    BasalArea_m2_ha AS BasalArea
+  FROM 
+    tblFieldDemo AS f
+  INNER JOIN 
+    fcplots
+  ON 
+    f.PlotID = fcplots.plotid
+  INNER JOIN 
+    luSex
+  ON 
+    f.Sex = luSex.Sex
+  WHERE 
+    SpecCode = 'SOLO';"
+
+# execute query
+rs = dbSendQuery(dbConn, query4)
+
+# retrieve results and put into a variable
+dbRows <- dbFetch(rs)
+
+# Clear the result
+dbClearResult(rs)
+
+# calculate the count
+rowCount <- nrow(dbRows)
+dbRows$cnt <- rowCount
+
+# put data in regression table
+regData <- dbRows
+
+# close database connection
+dbDisconnect(dbConn)
+```
+
+
+Now do the regression
+
+(I hope that this is the intended regression, because to me it doesn't make *any* sense)
+
+\[ soloCount_i = sex_i + trtmt_i + block_i + year_i + basalArea_i + \epsilon_i \]
+
+But because sex, trtmt, block and year are categorical, I need to transform them into dummies.
+
+
+Find the dummies
+
+```{r}
+# prepare the data, make variables into dummy variables
+
+# find which dummies I need
+# for treatment
+unique(regData$trtmt)
+
+# for sex
+unique(regData$sex)
+
+# for block
+unique(regData$block)
+
+# for year
+unique(regData$yr)
+```
+
+Now I need to create the dummies. I leave 
+
+* sex: No Clue
+* trtmt: SNAG
+* block: 1
+* yr: 2007
+
+as defaults
+
+Create the dummies
+
+```{r}
+# block: block1 is the default, then I need dummies for block2 and block3
+regData <- regData %>%
+  mutate(BLOCK2 = case_when(block == 2 ~ 1, TRUE ~ 0)) %>%
+  mutate(BLOCK3 = case_when(block == 3 ~ 1, TRUE ~ 0))
+
+# trtmt: SNAG is the default, then I need dummies for DWD, REM and CON
+regData <- regData %>%
+  mutate(DWD = case_when(trtmt == "DWD" ~ 1, TRUE ~ 0)) %>%
+  mutate(REM = case_when(trtmt == "REM" ~ 1, TRUE ~ 0)) %>%
+  mutate(CON = case_when(trtmt == "CON" ~ 1, TRUE ~ 0))
+
+# sex: no clue is the default, then I need dummies for Female and Male
+regData <- regData %>%
+  mutate(FEMALE = case_when(sex == "Female" ~ 1, TRUE ~ 0)) %>%
+  mutate(MALE = case_when(sex == "Male" ~ 1, TRUE ~ 0))
+
+# year: 2007 is the default
+regData <- regData %>%
+  mutate(Y2008 = case_when(yr == 2008 ~1, TRUE ~ 0))
+```
+
+
+
+
+Do the regression
+
+(which has become
+\[soloCount_i = FEMALE_i + MALE_i + DWD_i + REM_i + CON_i +BLOCK2_i + BLOCK3_i + Y2008_i + basalArea_i + \epsilon_i \]
+)
+
+Where the default is block1, SNAG, No Clue, 2007 if all dummies are 0.
+
+
+```{r}
+# do regression
+reg <- lm(cnt ~ FEMALE + MALE + DWD + REM + CON + BLOCK2 + BLOCK3 + Y2008 + BasalArea, regData)
+
+# create anova data
+anva <- aov(reg)
+
+# put results in output tables
+tblReg <- kable(tidy(reg), digits = 3)
+tblAnova <- kable(tidy(anva), digits = 3)
+```
+
+
+```{r echo = FALSE}
+tblReg
+```
+
+
+
+```{r echo = FALSE}
+tblAnova
+```
+
+
+Or as was asked for, a summary table:
+
+```{r}
+summary(anva)
+```
+
+
