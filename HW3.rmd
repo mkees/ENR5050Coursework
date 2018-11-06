@@ -2,15 +2,15 @@
 title: "HW3"
 author: "Maurice"
 output:
-  html_document:
-    df_print: paged
-    toc: no
-    toc_depth: '5'
   pdf_document:
     fig_height: 3
     fig_width: 4
     toc: no
     toc_depth: 5
+  html_document:
+    df_print: paged
+    toc: no
+    toc_depth: '5'
 header-includes: \usepackage{float} \usepackage{amsmath} \usepackage{amssymb}
 ---
 
@@ -21,6 +21,9 @@ knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message=FALSE)
 ## Comment
 
 Some of these exercises did not make any sense to me, and I have tried to interpret them as well as I could.
+
+Code can be found on my github page: www.github.com/mkees/ENR5050Coursework
+And this document is also published on RPubs: www.rpubs.com/MKees/ENR505_HW3
 
 ## Preamble
 
@@ -198,9 +201,20 @@ tbl3
 \newpage
 ## Exercise 4
 
-*We are interested in creating a data.framethat can be used to fit an ANOVA (within R) for one particular species (SOLO). We want to know if SOLO abundance (total number of captures) is affected by Sex, Treatment (TRTMT), Block, Year and BasalArea_m2. Thus you will need to use multiple tables (JOINS) to obtain your required dataset. The format of the table should be in the following order (response variable ~ predictor variables):SOLO_Count, Sex, Treatment, Block, Year, BasalArea_m2*sdf
+*We are interested in creating a data.framethat can be used to fit an ANOVA (within R) for one particular species (SOLO). We want to know if SOLO abundance (total number of captures) is affected by Sex, Treatment (TRTMT), Block, Year and BasalArea_m2. Thus you will need to use multiple tables (JOINS) to obtain your required dataset. The format of the table should be in the following order (response variable ~ predictor variables):SOLO_Count, Sex, Treatment, Block, Year, BasalArea_m2*
 
-First correct the database, by putting in the right numbers fro BasalArea
+
+I do this exercise in several steps
+
+1) correct the database
+2) retrieve all data from database
+3) build dependent variable *soloCount* in R
+4) execute regression
+
+
+### Correct the database
+
+Here I correct the database, by putting in the correct values for *basalArea*, as was done in class. The code is not executed, but just shown.
 
 
 ```{r eval = FALSE}
@@ -228,9 +242,9 @@ for(i in 1:nrow(ba)){
 ```
 
 
-Then start with the exercise
 
-First, retrieve the data from the database
+### retrieve all data from database
+
 
 ```{r}
 query4 <- "
@@ -257,99 +271,66 @@ query4 <- "
 rs = dbSendQuery(dbConn, query4)
 
 # retrieve results and put into a variable
-dbRows <- dbFetch(rs)
+regData <- dbFetch(rs)
 
 # Clear the result
 dbClearResult(rs)
-
-# calculate the count
-rowCount <- nrow(dbRows)
-dbRows$cnt <- rowCount
-
-# put data in regression table
-regData <- dbRows
 
 # close database connection
 dbDisconnect(dbConn)
 ```
 
 
-Now do the regression
-
-(I hope that this is the intended regression, because to me it doesn't make *any* sense)
-
-\[ soloCount_i = sex_i + trtmt_i + block_i + year_i + basalArea_i + \epsilon_i \]
-
-But because sex, trtmt, block and year are categorical, I need to transform them into dummies.
 
 
-Find the dummies
+### Build dependent variable
+
+Now build the dependent variable *soloCount*
+
 
 ```{r}
-# prepare the data, make variables into dummy variables
 
-# find which dummies I need
-# for treatment
-unique(regData$trtmt)
+# add in a dummy variable for number of observations over which I can sum
+regData <- regData %>% 
+  mutate(obs = 1)
 
-# for sex
-unique(regData$sex)
+# summarize data, and use "complete" to fill in missing values
+summarizedRegData <- regData %>%
+  complete(sex, block, trtmt, yr, fill = list(obs = 0)) %>%
+  group_by(sex, block, trtmt, yr) %>%
+  summarize(count = sum(obs))
 
-# for block
-unique(regData$block)
+# add in basal area, which was lost in the previous step
+# (I'm sure it could have been done in one go, but I can't get it to work with "complete")
 
-# for year
-unique(regData$yr)
-```
+# create lookup table
+luBasals <- regData %>%
+  select(trtmt, BasalArea, block)
 
-Now I need to create the dummies. I leave 
+# keep only unique values
+luBasals <- luBasals %>%
+  unique() %>%
+  arrange(trtmt, block)
 
-* sex: No Clue
-* trtmt: SNAG
-* block: 1
-* yr: 2007
+# join basal area into the summarized data
+summarizedRegData <- summarizedRegData %>% 
+    left_join(luBasals, by = c("block" = "block", "trtmt" = "trtmt"))
 
-as defaults
-
-Create the dummies
-
-```{r}
-# block: block1 is the default, then I need dummies for block2 and block3
-regData <- regData %>%
-  mutate(BLOCK2 = case_when(block == 2 ~ 1, TRUE ~ 0)) %>%
-  mutate(BLOCK3 = case_when(block == 3 ~ 1, TRUE ~ 0))
-
-# trtmt: SNAG is the default, then I need dummies for DWD, REM and CON
-regData <- regData %>%
-  mutate(DWD = case_when(trtmt == "DWD" ~ 1, TRUE ~ 0)) %>%
-  mutate(REM = case_when(trtmt == "REM" ~ 1, TRUE ~ 0)) %>%
-  mutate(CON = case_when(trtmt == "CON" ~ 1, TRUE ~ 0))
-
-# sex: no clue is the default, then I need dummies for Female and Male
-regData <- regData %>%
-  mutate(FEMALE = case_when(sex == "Female" ~ 1, TRUE ~ 0)) %>%
-  mutate(MALE = case_when(sex == "Male" ~ 1, TRUE ~ 0))
-
-# year: 2007 is the default
-regData <- regData %>%
-  mutate(Y2008 = case_when(yr == 2008 ~1, TRUE ~ 0))
 ```
 
 
-
-
-Do the regression
-
-(which has become
-\[soloCount_i = FEMALE_i + MALE_i + DWD_i + REM_i + CON_i +BLOCK2_i + BLOCK3_i + Y2008_i + basalArea_i + \epsilon_i \]
-)
-
-Where the default is block1, SNAG, No Clue, 2007 if all dummies are 0.
+### Execute regression
 
 
 ```{r}
+# first put variables in correct format
+
+# set variables as factors
+summarizedRegData$sex <- as_factor(summarizedRegData$sex)
+summarizedRegData$trtmt <- as_factor(summarizedRegData$trtmt)
+
 # do regression
-reg <- lm(cnt ~ FEMALE + MALE + DWD + REM + CON + BLOCK2 + BLOCK3 + Y2008 + BasalArea, regData)
+reg <- lm(count ~ sex + trtmt + block + yr + BasalArea, summarizedRegData)
 
 # create anova data
 anva <- aov(reg)
@@ -360,11 +341,22 @@ tblAnova <- kable(tidy(anva), digits = 3)
 ```
 
 
+The requested regression was
+\[ soloCount_i = \alpha + sex_i + trtmt_i + block_i + year_i + basalArea_i + \epsilon_i \]
+
+But because sex and trtmt are factors, R made them automatically into dummy variables. The regression has become
+\[soloCount_i = \alpha + sexMale_i + sexNoClue_i + trtmtDWD_i + trtmtREM_i + trtmtSNAG_i + block + yr + BasalArea_i + \epsilon_i \]
+
+Where the default is sexFemale and trtmtCON if all dummies are 0.
+
+
+The regression results are as follows:
+
 ```{r echo = FALSE}
 tblReg
 ```
 
-
+And the anova table is:
 
 ```{r echo = FALSE}
 tblAnova
