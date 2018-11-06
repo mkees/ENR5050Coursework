@@ -1,4 +1,4 @@
 # ENR5050Coursework
 
 
-Here I post the code for my homework for the course ENR5050 Data Management
+My code for homework assignments for the course ENR5050 Data Management, taught in Fall 2018.
